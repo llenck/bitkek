@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <type_traits>
 
 #include <cstring>
@@ -14,6 +15,34 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/socket.h>
+
+template <int buf_sz, int buf_cnt, bool ipv6 = false>
+struct RecvBuffers {
+	using sockaddr = std::conditional<ipv6, sockaddr_in6, sockaddr_in>;
+
+	std::array<std::array<uint8_t, buf_sz>, buf_cnt> buffers;
+	std::array<struct iovec, buf_cnt> iovecs;
+	std::array<struct mmsghdr, buf_cnt> headers;
+	std::array<sockaddr, buf_cnt> addrs;
+
+	RecvBuffers() {
+		for (int i = 0; i < buf_cnt; i++) {
+			iovecs[i].iov_base = buffers[i].data();
+			iovecs[i].iov_len = buf_sz;
+
+			headers[i].msg_hdr.msg_name = &addrs[i];
+			headers[i].msg_hdr.msg_namelen = sizeof(sockaddr);
+			headers[i].msg_hdr.msg_iov = &iovecs[i];
+			headers[i].msg_hdr.msg_iovlen = 1;
+			headers[i].msg_hdr.msg_control = NULL;
+			headers[i].msg_hdr.msg_controllen = 0;
+			//headers[i].msg_hdr.msg_flags = 0; // gets written by recvmmsg()
+			//headers[i].msg_len = 0; // also written by recvmmsg()
+		}
+	}
+	RecvBuffers(const RecvBuffers& other) = delete;
+	RecvBuffers(RecvBuffers&& other) = delete;
+};
 
 struct UdpSocket {
 	int sock = -1;
@@ -59,37 +88,25 @@ struct UdpSocket {
 			close(sock);
 		}
 	}
-};
 
-template <int buf_sz, int buf_cnt, bool ipv6 = false>
-struct RecvBuffers {
-	using sockaddr = std::conditional<ipv6, sockaddr_in6, sockaddr_in>;
+	// Buffer is RecvBuffers<...>
+	template<typename Buffer>
+	int recvmmsg_into(Buffer& target, bool block = false,
+			long timeout_us = 0)
+	{
+		struct timespec timeout {
+			.tv_sec = timeout_us / 1000000,
+			.tv_nsec = (timeout_us % 1000000) * 1000,
+		};
 
-	std::array<std::array<uint8_t, buf_sz>, buf_cnt> buffers;
-	std::array<struct msg_iovec, buf_cnt> iovecs;
-	std::array<struct msghdr, buf_cnt> headers;
-	std::array<sockaddr, buf_cnt> addrs;
-
-	RecvBuffers() {
-		for (int i = 0; i < buf_cnt; i++) {
-			iovecs[i].iov_base = buffers[i].data();
-			iovecs[i].iov_len = buf_sz;
-
-			headers[i].msg_hdr.msg_name = &addrs[i];
-			headers[i].msg_hdr.msg_namelen = sizeof(sockaddr);
-			headers[i].msg_hdr.msg_iov = &iovecs[i];
-			headers[i].msg_hdr.msg_iovlen = 1;
-			headers[i].msg_hdr.msg_control = NULL;
-			headers[i].msg_hdr.msg_controllen = 0;
-			//headers[i].msg_hdr.msg_flags = 0; // gets written by recvmmsg()
-			//headers[i].msg_len = 0; // also written by recvmmsg()
-		}
+		return recvmmsg(sock, target.headers.data(), target.headers.size(),
+				block? 0 : MSG_WAITFORONE, timeout_us == 0? NULL : &timeout);
 	}
-	RecvBuffers(const RecvBuffers& other) = delete;
-	RecvBuffers(RecvBuffers&& other) = delete;
 };
 
 int main() {
 	UdpSocket s("127.0.0.1:1234");
-	getchar();
+	auto bufs = std::make_unique<RecvBuffers<1024, 2>>();
+
+	int msgs = s.recvmmsg_into(*bufs, true);
 }
