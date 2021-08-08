@@ -1,10 +1,10 @@
-CXXFLAGS ?= -Wall -Wextra
+CXXFLAGS ?= -Wall -Wextra -std=c++20
 LDFLAGS ?=
 CXX ?= g++
 
-SOURCES := main.cpp
+SOURCES := main.cpp requests.cpp
 OBJECTS := $(patsubst %.cpp,%.o,$(SOURCES))
-HEADERS :=
+HEADERS := requests.hpp req_types.hpp
 EXECUTABLE := main
 
 debug : CXXFLAGS += -Og -g
@@ -18,7 +18,7 @@ release: $(EXECUTABLE)
 $(EXECUTABLE): $(OBJECTS) $(HEADERS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $@
 
-%.o: %.c $(HEADERS)
+%.o: %.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) $< -c
 
 .PHONY: clean

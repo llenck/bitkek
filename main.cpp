@@ -8,13 +8,17 @@
 #include <array>
 #include <memory>
 #include <type_traits>
+#include <span>
 
 #include <cstring>
 #include <cstdio>
+#include <cstdint>
 
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/socket.h>
+
+#include "requests.hpp"
 
 template <int buf_sz, int buf_cnt, bool ipv6 = false>
 struct RecvBuffers {
@@ -42,6 +46,10 @@ struct RecvBuffers {
 	}
 	RecvBuffers(const RecvBuffers& other) = delete;
 	RecvBuffers(RecvBuffers&& other) = delete;
+
+	std::span<uint8_t> operator[](off_t off) {
+		return {buffers[off].data(), headers[off].msg_len};
+	}
 };
 
 struct UdpSocket {
@@ -104,9 +112,46 @@ struct UdpSocket {
 	}
 };
 
-int main() {
-	UdpSocket s("127.0.0.1:1234");
-	auto bufs = std::make_unique<RecvBuffers<1024, 2>>();
+void handle_req(UdpSocket& s, Request& req) {
+	printf("Got request: %s (conn_id: %lu)\n", req.name(), req.conn_id());
 
-	int msgs = s.recvmmsg_into(*bufs, true);
+	switch (req.type()) {
+	case RqType::Connect:
+		printf("a\n");
+		break;
+
+	case RqType::Announce:
+		printf("b\n");
+		break;
+
+	default:
+		printf("[debug] Unknown request type\n");
+		break;
+	}
+}
+
+void main_loop(UdpSocket& s) {
+	auto bufs = std::make_unique<RecvBuffers<1024, 16>>();
+
+	do {
+		int msgs = s.recvmmsg_into(*bufs);
+
+		for (int i = 0; i < msgs; i++) {
+			std::span<uint8_t> buf = (*bufs)[i];
+
+			std::unique_ptr<Request> req(parse_req(buf));
+
+			if (req) {
+				handle_req(s, *req);
+			}
+			else {
+				printf("Got garbage :(\n");
+			}
+		}
+	} while(0);
+}
+
+int main() {
+	UdpSocket s("127.0.0.1:6969");
+	main_loop(s);
 }
